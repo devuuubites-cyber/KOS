@@ -1,0 +1,6 @@
+# KOS iPad/Pyto profile
+# Avoids native packages that iPadOS may not be able to install at runtime.
+fastapi==0.128.2
+uvicorn==0.48.0
+pypdf==5.9.0
+python-multipart==0.0.20
