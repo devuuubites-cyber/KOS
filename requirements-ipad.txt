@@ -1,6 +1,8 @@
 # KOS iPad/Pyto profile
-# Avoids native packages that iPadOS may not be able to install at runtime.
-fastapi==0.128.2
-uvicorn==0.48.0
+# Pyto/iPadOS cannot build arbitrary native Rust extensions such as pydantic-core.
+# FastAPI 0.95 + Pydantic 1 avoids the Rust pydantic-core build required by newer FastAPI.
+fastapi==0.95.2
+pydantic==1.10.15
+uvicorn==0.30.6
 pypdf==5.9.0
 python-multipart==0.0.20
