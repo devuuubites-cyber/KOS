@@ -1,0 +1,7 @@
+fastapi==0.128.2
+uvicorn==0.48.0
+pypdf==5.9.0
+PyMuPDF==1.26.7
+beautifulsoup4==4.14.3
+lxml==6.1.1
+python-multipart==0.0.20
