@@ -8,6 +8,7 @@ from .store import get_book,import_book,list_books,process_book,search
 from .storage import Store
 from .retrieval import index_embeddings,semantic_search,hybrid_search
 from .bridge import retrieve,tool_manifest
+from .exporter import export_json,export_markdown
 app=FastAPI(title='KOS — Personal Knowledge OS',version='0.7.0'); app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False)
 def index(): return FileResponse(STATIC_DIR/'index.html')
@@ -65,22 +66,14 @@ def ai_retrieve(q:str,limit:int=8):
     try:return retrieve(q,limit)
     except ValueError as exc: raise HTTPException(400,str(exc)) from exc
 @app.get('/api/export/json')
-def export_json():
+def export_json_api():
     db=Store(DB_PATH)
-    try:
-        payload={t:[dict(r) for r in db.conn.execute(f'SELECT * FROM {t}').fetchall()] for t in ('books','chapters','sections','chunks','knowledge_objects','relationships')}
-        return JSONResponse(payload,headers={'Content-Disposition':'attachment; filename=kos-export.json'})
+    try:return JSONResponse(export_json(db),headers={'Content-Disposition':'attachment; filename=kos-export.json'})
     finally:db.close()
 @app.get('/api/export/markdown')
-def export_markdown():
+def export_markdown_api():
     db=Store(DB_PATH)
-    try:
-        books=db.conn.execute('SELECT id,title,author FROM books ORDER BY title').fetchall(); lines=['# KOS Knowledge Export','']
-        for b in books:
-            lines += [f'## {b["title"]}',f'**Author:** {b["author"] or "Unknown"}','']
-            rows=db.conn.execute('SELECT type,title,short_statement,detailed_explanation,importance,confidence,source_json,knowledge_status,claim_status FROM knowledge_objects WHERE book_id=? ORDER BY importance DESC,title',(b['id'],)).fetchall()
-            for r in rows: lines += [f'### {r["title"]}',f'- **Type:** {r["type"]}',f'- **Importance:** {r["importance"]}/5',f'- **Confidence:** {r["confidence"]}',f'- **Status:** {r["knowledge_status"]}',f'- **Claim:** {r["claim_status"]}',f'\n{r["short_statement"]}',r["detailed_explanation"] or '',f'**Source:** {r["source_json"] or "Unavailable"}','']
-        return PlainTextResponse('\n'.join(lines),media_type='text/markdown',headers={'Content-Disposition':'attachment; filename=kos-export.md'})
+    try:return PlainTextResponse(export_markdown(db),media_type='text/markdown',headers={'Content-Disposition':'attachment; filename=kos-export.md'})
     finally:db.close()
 @app.post('/api/embeddings/index')
 def embeddings_index():
