@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 from .config import ALLOWED_EXTENSIONS, BOOKS_DIR, DB_PATH, MAX_UPLOAD_BYTES
 from .ingestion import extract_book
-from .models import BookMetadata
+from .models import BookMetadata, Chunk
 from .storage import Store
 from .extraction import extract_chunks
 from .providers import LocalLLMProvider
@@ -31,26 +31,29 @@ def process_book(document_id):
     if not metadata_path.exists(): raise FileNotFoundError('Book not found.')
     meta=json.loads(metadata_path.read_text(encoding='utf-8')); original=next((p for p in (dest/'original').iterdir() if p.is_file()),None)
     if original is None: raise FileNotFoundError('Original book file is missing.')
-    db=Store(DB_PATH)
+    db=Store(DB_PATH); completed=db.completed_stages(document_id)
     try:
-        meta['processing_status']='EXTRACTING'; _write_json(metadata_path,meta); db.set_job(document_id,'EXTRACTING','RUNNING')
-        full_text,blocks,count,extracted_meta,chapters,sections,chunks=extract_book(original)
-        meta['title']=extracted_meta.get('title') or meta['title']; meta['author']=extracted_meta.get('author'); meta['page_count']=extracted_meta.get('pages') or count; meta['chapter_count']=len(chapters); meta['chunk_count']=len(chunks)
-        for c in chunks:c.document_id=document_id
-        (dest/'extracted'/'text.txt').write_text(full_text,encoding='utf-8'); _write_json(dest/'extracted'/'structure.json',{'document_id':document_id,'chapters':[s.__dict__ for s in chapters],'sections':[s.__dict__ for s in sections],'chunks':[c.__dict__ for c in chunks]})
-        db.save_book(document_id,meta['title'],meta.get('author'),meta['file_type'],str(original),meta); db.save_structure(document_id,chapters,sections,chunks); db.set_job(document_id,'EXTRACTING','COMPLETE'); db.set_job(document_id,'CHUNKING','COMPLETE',f'{len(chunks)} chunks')
-        meta['processing_status']='ANALYZING'; _write_json(metadata_path,meta); db.set_job(document_id,'ANALYZING','RUNNING')
-        endpoint=os.getenv('KOS_LOCAL_LLM_ENDPOINT'); model=os.getenv('KOS_EXTRACTION_MODEL'); provider=LocalLLMProvider(endpoint) if endpoint and model else None
-        objects=extract_chunks(provider,chunks,document_id,meta['title'],meta.get('author'),model)
-        db.save_knowledge(document_id,objects); db.set_job(document_id,'ANALYZING','COMPLETE',f'{len(objects)} knowledge objects'); db.set_job(document_id,'VALIDATING','COMPLETE')
-        meta['knowledge_count']=len(objects)
-        meta['processing_status']='EMBEDDING'; _write_json(metadata_path,meta); db.set_job(document_id,'EMBEDDING','RUNNING')
-        try:
-            indexed_chunks,indexed_knowledge=index_embeddings(db); db.set_job(document_id,'EMBEDDING','COMPLETE',f'{indexed_chunks} chunks, {indexed_knowledge} knowledge objects')
-        except Exception as exc:
-            db.set_job(document_id,'EMBEDDING','FAILED',f'{type(exc).__name__}: {exc}'); raise
-        db.set_job(document_id,'INDEXING','COMPLETE')
-        meta['processing_status']='COMPLETE'; meta['error']=None; _write_json(metadata_path,meta); _write_json(dest/'processing'/'result.json',{'status':'COMPLETE','completed_at':utc_now(),'blocks':len(blocks),'chapters':len(chapters),'sections':len(sections),'chunks':len(chunks),'knowledge_objects':len(objects)}); return meta
+        if 'EXTRACTING' not in completed or 'CHUNKING' not in completed:
+            meta['processing_status']='EXTRACTING'; _write_json(metadata_path,meta); db.set_job(document_id,'EXTRACTING','RUNNING')
+            full_text,blocks,count,extracted_meta,chapters,sections,chunks=extract_book(original)
+            meta['title']=extracted_meta.get('title') or meta['title']; meta['author']=extracted_meta.get('author'); meta['page_count']=extracted_meta.get('pages') or count; meta['chapter_count']=len(chapters); meta['chunk_count']=len(chunks)
+            for c in chunks:c.document_id=document_id
+            (dest/'extracted'/'text.txt').write_text(full_text,encoding='utf-8'); _write_json(dest/'extracted'/'structure.json',{'document_id':document_id,'chapters':[s.__dict__ for s in chapters],'sections':[s.__dict__ for s in sections],'chunks':[c.__dict__ for c in chunks]})
+            db.save_book(document_id,meta['title'],meta.get('author'),meta['file_type'],str(original),meta); db.save_structure(document_id,chapters,sections,chunks); db.set_job(document_id,'EXTRACTING','COMPLETE'); db.set_job(document_id,'CHUNKING','COMPLETE',f'{len(chunks)} chunks'); completed.update({'EXTRACTING','CHUNKING'})
+        structure=json.loads((dest/'extracted'/'structure.json').read_text(encoding='utf-8'))
+        chunks=[Chunk(c['id'],document_id,c.get('chapter'),c.get('section'),c.get('page_start'),c.get('page_end'),c['sequence'],c['text']) for c in structure.get('chunks',[])]
+        if 'ANALYZING' not in completed:
+            meta['processing_status']='ANALYZING'; _write_json(metadata_path,meta); db.set_job(document_id,'ANALYZING','RUNNING')
+            endpoint=os.getenv('KOS_LOCAL_LLM_ENDPOINT'); model=os.getenv('KOS_EXTRACTION_MODEL'); provider=LocalLLMProvider(endpoint) if endpoint and model else None
+            objects=extract_chunks(provider,chunks,document_id,meta['title'],meta.get('author'),model)
+            db.save_knowledge(document_id,objects); db.set_job(document_id,'ANALYZING','COMPLETE',f'{len(objects)} knowledge objects'); db.set_job(document_id,'VALIDATING','COMPLETE'); meta['knowledge_count']=len(objects); completed.update({'ANALYZING','VALIDATING'})
+        else:
+            meta['knowledge_count']=db.counts(document_id)['knowledge_objects']
+        if 'EMBEDDING' not in completed:
+            meta['processing_status']='EMBEDDING'; _write_json(metadata_path,meta); db.set_job(document_id,'EMBEDDING','RUNNING')
+            indexed_chunks,indexed_knowledge=index_embeddings(db); db.set_job(document_id,'EMBEDDING','COMPLETE',f'{indexed_chunks} chunks, {indexed_knowledge} knowledge objects'); completed.add('EMBEDDING')
+        if 'INDEXING' not in completed: db.set_job(document_id,'INDEXING','COMPLETE'); completed.add('INDEXING')
+        meta['processing_status']='COMPLETE'; meta['error']=None; _write_json(metadata_path,meta); _write_json(dest/'processing'/'result.json',{'status':'COMPLETE','completed_at':utc_now(),'stages':sorted(completed),'counts':db.counts(document_id)}); return meta
     except Exception as exc:
         meta['processing_status']='FAILED'; meta['error']=f'{type(exc).__name__}: {exc}'; _write_json(metadata_path,meta); db.set_job(document_id,'FAILED','FAILED',meta['error']); raise
     finally: db.close()
@@ -62,7 +65,7 @@ def get_book(document_id):
     meta=json.loads(p.read_text(encoding='utf-8')); structure=_book_dir(document_id)/'extracted'/'structure.json'
     if structure.exists(): meta['structure']=json.loads(structure.read_text(encoding='utf-8'))
     db=Store(DB_PATH)
-    try: meta['db_counts']=db.counts(document_id)
+    try: meta['db_counts']=db.counts(document_id); meta['completed_stages']=sorted(db.completed_stages(document_id))
     finally: db.close()
     return meta
 def search(query:str,limit:int=20):
