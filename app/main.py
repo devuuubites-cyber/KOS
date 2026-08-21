@@ -1,19 +1,17 @@
 from pathlib import Path
-import shutil,tempfile,os
+import shutil,tempfile
 from fastapi import BackgroundTasks,FastAPI,File,HTTPException,UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from .config import STATIC_DIR, DB_PATH
+from .config import STATIC_DIR,DB_PATH
 from .store import get_book,import_book,list_books,process_book,search
 from .storage import Store
 from .retrieval import index_embeddings,semantic_search,hybrid_search
-
-app=FastAPI(title='KOS — Personal Knowledge OS',version='0.4.0')
-app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
+app=FastAPI(title='KOS — Personal Knowledge OS',version='0.5.0'); app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False)
 def index(): return FileResponse(STATIC_DIR/'index.html')
 @app.get('/api/health')
-def health(): return {'status':'ok','mode':'local','version':app.version,'embeddings':'local'}
+def health(): return {'status':'ok','mode':'local','version':app.version,'storage':'sqlite','search':['keyword','semantic','hybrid']}
 @app.get('/api/books')
 def books(): return list_books()
 @app.get('/api/books/{document_id}')
@@ -42,12 +40,16 @@ def knowledge_hybrid_search(q:str,limit:int=20):
     db=Store(DB_PATH)
     try:return {'query':q,'results':hybrid_search(db,q,max(1,min(limit,100)))}
     finally:db.close()
+@app.get('/api/knowledge/{object_id}/relationships')
+def knowledge_relationships(object_id:str):
+    db=Store(DB_PATH)
+    try:return {'object_id':object_id,'relationships':db.relationships(object_id)}
+    finally:db.close()
 @app.post('/api/embeddings/index')
 def embeddings_index():
     db=Store(DB_PATH)
     try:
-        chunks,knowledge=index_embeddings(db)
-        return {'status':'COMPLETE','chunks_indexed':chunks,'knowledge_indexed':knowledge}
+        chunks,knowledge=index_embeddings(db); return {'status':'COMPLETE','chunks_indexed':chunks,'knowledge_indexed':knowledge}
     except Exception as exc: raise HTTPException(500,f'Embedding index failed: {type(exc).__name__}: {exc}') from exc
     finally:db.close()
 @app.post('/api/books/import')
