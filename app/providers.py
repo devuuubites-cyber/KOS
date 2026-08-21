@@ -1,56 +1,29 @@
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
-
-
+import json
 @dataclass(frozen=True)
 class ModelRequest:
-    role: str
-    prompt: str
-    context: str = ""
-    model: str | None = None
-    temperature: float = 0.0
-
-
+    role:str; prompt:str; context:str=''; model:str|None=None; temperature:float=0.0
 class LLMProvider(ABC):
-    """Provider-neutral interface. Business logic must depend on this, not a vendor SDK."""
-
-    name: str = "abstract"
-
+    name='abstract'
     @abstractmethod
-    def generate(self, request: ModelRequest) -> str:
-        raise NotImplementedError
-
-
+    def generate(self,request:ModelRequest)->str: raise NotImplementedError
 class LocalLLMProvider(LLMProvider):
-    name = "local"
-
-    def __init__(self, endpoint: str = "http://127.0.0.1:11434"):
-        self.endpoint = endpoint
-
-    def generate(self, request: ModelRequest) -> str:
-        raise RuntimeError("Local LLM adapter is not configured yet. The provider interface is ready; no network call is made by KOS V1.")
-
-
+    name='local'
+    def __init__(self,endpoint='http://127.0.0.1:11434'): self.endpoint=endpoint.rstrip('/')
+    def generate(self,request):
+        import urllib.request
+        payload=json.dumps({'model':request.model,'prompt':request.prompt+'\n'+request.context,'stream':False,'options':{'temperature':request.temperature}}).encode()
+        req=urllib.request.Request(self.endpoint+'/api/generate',data=payload,headers={'Content-Type':'application/json'})
+        try:
+            with urllib.request.urlopen(req,timeout=300) as r: return json.loads(r.read().decode())['response']
+        except Exception as e: raise RuntimeError(f'Local LLM unavailable: {e}') from e
 class CloudLLMProvider(LLMProvider):
-    """Base adapter for optional cloud providers; credentials stay outside source code."""
-
-    name = "cloud"
-
-    def __init__(self, api_key: str | None = None):
-        self.api_key = api_key
-
-    def generate(self, request: ModelRequest) -> str:
-        raise RuntimeError("No cloud vendor is enabled. Configure a concrete adapter explicitly before sending book text externally.")
-
-
+    name='cloud'
+    def __init__(self,api_key=None): self.api_key=api_key
+    def generate(self,request): raise RuntimeError('No cloud vendor is enabled. Configure a concrete adapter explicitly before sending book text externally.')
 @dataclass
 class ModelRouting:
-    fast_model: str | None = None
-    extraction_model: str | None = None
-    quality_model: str | None = None
-
-    def for_role(self, role: str) -> str | None:
-        return {"fast": self.fast_model, "extraction": self.extraction_model, "quality": self.quality_model}.get(role)
+    fast_model:str|None=None; extraction_model:str|None=None; quality_model:str|None=None
+    def for_role(self,role): return {'fast':self.fast_model,'extraction':self.extraction_model,'quality':self.quality_model}.get(role)
