@@ -30,9 +30,9 @@ class Store:
    self.conn.execute('INSERT OR REPLACE INTO knowledge_objects VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(data['id'],book_id,data['type'],data['title'],data['short_statement'],data['detailed_explanation'],data['importance'],data['confidence'],json.dumps(data.get('domains',[])),json.dumps(data.get('tags',[])),json.dumps(data.get('applications',[])),json.dumps(source),data.get('knowledge_status','SOURCE_DERIVED'),data.get('claim_status','AUTHOR_CLAIM')))
    self.conn.execute('DELETE FROM knowledge_fts WHERE object_id=?',(data['id'],)); self.conn.execute('INSERT INTO knowledge_fts VALUES(?,?,?,?,?,?)',(data['id'],book_id,data['title'],data['short_statement'],data['detailed_explanation'],' '.join(data.get('tags',[]))))
    for target in data.get('related_objects',[]):
-    if target in ids:self.conn.execute('INSERT OR IGNORE INTO relationships VALUES(?,?,?,?)',(f"rel-{data['id']}-{target}-related",data['id'],target,'related_to'))
+    if target in ids:self.conn.execute('INSERT OR IGNORE INTO relationships VALUES(?,?,?,?)',(f'rel-{data["id"]}-{target}-related',data['id'],target,'related_to'))
    for target in data.get('contradicting_objects',[]):
-    if target in ids:self.conn.execute('INSERT OR IGNORE INTO relationships VALUES(?,?,?,?)',(f"rel-{data['id']}-{target}-contradicts",data['id'],target,'contradicts'))
+    if target in ids:self.conn.execute('INSERT OR IGNORE INTO relationships VALUES(?,?,?,?)',(f'rel-{data["id"]}-{target}-contradicts',data['id'],target,'contradicts'))
   self.conn.commit()
  def save_embeddings(self,owner_type,items,provider,model):
   for owner_id,vector in items:self.conn.execute('INSERT OR REPLACE INTO embeddings VALUES(?,?,?,?,?,?)',(owner_type,owner_id,provider,model,len(vector),json.dumps(vector,separators=(',',':'))))
@@ -40,6 +40,8 @@ class Store:
  def get_embeddings(self,owner_type,provider,model): return [(r['owner_id'],json.loads(r['vector_json'])) for r in self.conn.execute('SELECT owner_id,vector_json FROM embeddings WHERE owner_type=? AND provider=? AND model=?',(owner_type,provider,model)).fetchall()]
  def relationships(self,object_id): return [dict(r) for r in self.conn.execute('SELECT * FROM relationships WHERE from_object_id=? OR to_object_id=?',(object_id,object_id)).fetchall()]
  def set_job(self,book_id,stage,status,detail=None): self.conn.execute('INSERT INTO processing_jobs(book_id,stage,status,detail) VALUES(?,?,?,?)',(book_id,stage,status,detail)); self.conn.commit()
+ def latest_job(self,book_id,stage): return self.conn.execute('SELECT * FROM processing_jobs WHERE book_id=? AND stage=? ORDER BY id DESC LIMIT 1',(book_id,stage)).fetchone()
+ def completed_stages(self,book_id): return {r['stage'] for r in self.conn.execute("SELECT stage FROM processing_jobs WHERE book_id=? AND status='COMPLETE' GROUP BY stage",(book_id,)).fetchall()}
  def search_chunks(self,query,limit=20): return [dict(r) for r in self.conn.execute('SELECT c.* FROM chunks_fts f JOIN chunks c ON c.id=f.chunk_id WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) LIMIT ?',(query,limit)).fetchall()]
  def search_knowledge(self,query,limit=20): return [dict(r) for r in self.conn.execute('SELECT k.* FROM knowledge_fts f JOIN knowledge_objects k ON k.id=f.object_id WHERE knowledge_fts MATCH ? ORDER BY bm25(knowledge_fts) LIMIT ?',(query,limit)).fetchall()]
  def all_chunks(self): return [dict(r) for r in self.conn.execute('SELECT * FROM chunks ORDER BY book_id,sequence').fetchall()]
