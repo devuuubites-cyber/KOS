@@ -7,11 +7,12 @@ from .config import STATIC_DIR,DB_PATH
 from .store import get_book,import_book,list_books,process_book,search
 from .storage import Store
 from .retrieval import index_embeddings,semantic_search,hybrid_search
-app=FastAPI(title='KOS — Personal Knowledge OS',version='0.6.0'); app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
+from .bridge import retrieve,tool_manifest
+app=FastAPI(title='KOS — Personal Knowledge OS',version='0.7.0'); app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False)
 def index(): return FileResponse(STATIC_DIR/'index.html')
 @app.get('/api/health')
-def health(): return {'status':'ok','mode':'local','version':app.version,'storage':'sqlite','search':['keyword','semantic','hybrid']}
+def health(): return {'status':'ok','mode':'local','version':app.version,'storage':'sqlite','search':['keyword','semantic','hybrid'],'ai_bridge':'local_http'}
 @app.get('/api/books')
 def books(): return list_books()
 @app.get('/api/books/{document_id}')
@@ -57,6 +58,12 @@ def knowledge_relationships(object_id:str):
     db=Store(DB_PATH)
     try:return {'object_id':object_id,'relationships':db.relationships(object_id)}
     finally:db.close()
+@app.get('/api/ai/manifest')
+def ai_manifest(): return tool_manifest()
+@app.get('/api/ai/retrieve')
+def ai_retrieve(q:str,limit:int=8):
+    try:return retrieve(q,limit)
+    except ValueError as exc: raise HTTPException(400,str(exc)) from exc
 @app.get('/api/export/json')
 def export_json():
     db=Store(DB_PATH)
@@ -85,7 +92,7 @@ def embeddings_index():
 @app.post('/api/books/import')
 async def upload_book(file:UploadFile=File(...)):
     suffix=Path(file.filename or '').suffix.lower()
-    if suffix not in {'.pdf','.epub'}: raise HTTPException(400,'Only PDF and EPUB files are supported.')
+    if suffix not in {'.pdf','.epub'}: raise HTTPException(400,'Only PDF and EPUB are supported.')
     with tempfile.NamedTemporaryFile(suffix=suffix,delete=False) as tmp:
         tmp_path=Path(tmp.name); shutil.copyfileobj(file.file,tmp)
     try:return import_book(tmp_path,file.filename or 'book').__dict__
