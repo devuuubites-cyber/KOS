@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json
-from .knowledge import KnowledgeObject, validate_knowledge
+from .knowledge import KnowledgeObject, SourceRef, validate_knowledge
 
 ALLOWED_TYPES = {'concept','definition','principle','claim','fact','mental_model','framework','method','procedure','heuristic','strategy','rule','example','case_study','evidence','argument','counterargument','warning','limitation','application','question'}
 
@@ -14,12 +14,17 @@ def parse_llm_objects(raw: str) -> list[KnowledgeObject]:
     for item in data:
         if not isinstance(item, dict):
             raise ValueError('Every knowledge object must be a JSON object.')
-        obj = KnowledgeObject(**item)
+        item=dict(item)
+        source=item.get('source')
+        if isinstance(source, dict):
+            item['source']=SourceRef(**source)
+        try:
+            obj=KnowledgeObject(**item)
+        except TypeError as exc:
+            raise ValueError(f'Invalid knowledge object schema: {exc}') from exc
         if obj.type not in ALLOWED_TYPES:
             raise ValueError(f'Unsupported knowledge type: {obj.type}')
         validate_knowledge(obj)
-        if obj.knowledge_status == 'SOURCE_DERIVED' and obj.source is None:
-            raise ValueError('Source-derived knowledge requires source provenance.')
         objects.append(obj)
     return objects
 
